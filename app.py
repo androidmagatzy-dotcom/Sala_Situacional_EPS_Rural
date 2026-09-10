@@ -140,13 +140,13 @@ with st.sidebar.form("form_registro"):
     val_egreso_idx = CONDICIONES_EGRESO.index(fila_a_editar["CondicionEgreso"]) if fila_a_editar is not None and fila_a_editar["CondicionEgreso"] in CONDICIONES_EGRESO else 0
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO, index=val_egreso_idx)
     
-    # 1. DIAGNÓSTICOS MÚLTIPLES INTELIGENTES (Selección del historial + escribir nuevos libremente)
+    # 1. DIAGNÓSTICOS MÚLTIPLES INTELIGENTES
     val_dx_list = [x.strip() for x in str(fila_a_editar["Diagnosticos"]).split(";")] if fila_a_editar is not None else [dx_hist_list[0]]
-    val_dx_list = [x for x in val_dx_list if x in dx_hist_list] # Filtrar válidos en historial por defecto
+    val_dx_list = [x for x in val_dx_list if x in dx_hist_list]
     if not val_dx_list: val_dx_list = [dx_hist_list[0]]
     
     diagnosticos_sel = st.multiselect("Diagnósticos (Seleccione del historial o escriba nuevos y pulse Enter)", options=dx_hist_list, default=val_dx_list)
-    nuevo_dx_extra = st.text_input("Añadir otro diagnóstico nuevo (opcional):", value="")
+    nuevo_dx_extra = st.text_input("Añadir otro diagnóstico nuevo (si son varios, separar con ';'):", value="")
     
     lista_dx_final = diagnosticos_sel.copy()
     if nuevo_dx_extra.strip():
@@ -156,13 +156,13 @@ with st.sidebar.form("form_registro"):
     if not lista_dx_final: lista_dx_final = ["Apendicitis aguda"]
     diagnosticos_txt = "; ".join(lista_dx_final)
 
-    # 2. CÓDIGOS CIE-10 MÚLTIPLES INTELIGENTES (Selección del historial + escribir nuevos libremente)
+    # 2. CÓDIGOS CIE-10 MÚLTIPLES INTELIGENTES
     val_cie_list = [x.strip() for x in str(fila_a_editar["CIE10"]).split(";")] if fila_a_editar is not None else [cie_hist_list[0]]
     val_cie_list = [x for x in val_cie_list if x in cie_hist_list]
     if not val_cie_list: val_cie_list = [cie_hist_list[0]]
     
     cie10_sel = st.multiselect("Códigos CIE-10 (Seleccione del historial o escriba nuevos y pulse Enter)", options=cie_hist_list, default=val_cie_list)
-    nuevo_cie_extra = st.text_input("Añadir otro código CIE-10 nuevo (opcional):", value="")
+    nuevo_cie_extra = st.text_input("Añadir otro código CIE-10 nuevo (si son varios, separar con ';'):", value="")
     
     lista_cie_final = cie10_sel.copy()
     if nuevo_cie_extra.strip():
