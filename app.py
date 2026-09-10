@@ -76,7 +76,7 @@ st.title("🏥 Sala Situacional de Salud y Vigilancia Epidemiológica")
 
 df_global = cargar_datos()
 
-# Listas históricas para autocompletado inteligente
+# Listas históricas dinámicas para los menús
 procedencias_hist = sorted(list(df_global["Procedencia"].dropna().unique())) if not df_global.empty and "Procedencia" in df_global.columns else ["Central"]
 if not procedencias_hist: procedencias_hist = ["Central"]
 
@@ -105,12 +105,14 @@ with st.sidebar.form("form_registro"):
     sexo = st.radio("Sexo", ["Femenino", "Masculino"], horizontal=True)
     edad = st.number_input("Edad (años)", value=30, min_value=0, max_value=120)
     
-    # Campo inteligente que permite seleccionar o escribir nuevos valores
-    nueva_proc = st.text_input("Procedencia (Seleccione o escriba nueva área)", value=procedencias_hist[0])
-    
+    # Manejo dinámico para permitir escribir o seleccionar procedencias y diagnósticos nuevos
+    nueva_proc_select = st.selectbox("Procedencia (Historial)", options=["[Escribir nueva procedencia]"] + procedencias_hist)
+    custom_proc = st.text_input("Si escribió nueva procedencia, indíquela aquí (opcional):", value="")
+    procedencia_final = custom_proc.strip() if custom_proc.strip() else nueva_proc_select
+    if procedencia_final == "[Escribir nueva procedencia]": procedencia_final = "Central"
+
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO)
     
-    # Campos de texto libres separados por punto y coma para flexibilidad total de nuevos diagnósticos y códigos
     diagnosticos_txt = st.text_input("Diagnóstico(s) (Separar con ';')", value="Apendicitis aguda")
     cie10_txt = st.text_input("Código(s) CIE-10 (Separar con ';')", value="K35")
     
@@ -124,7 +126,7 @@ with st.sidebar.form("form_registro"):
             
             nuevo_registro = pd.DataFrame([{
                 "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
-                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": nueva_proc.strip(),
+                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia_final,
                 "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt.strip(), "CIE10": cie10_txt.strip()
             }])
             df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
@@ -145,7 +147,6 @@ if st.session_state.admin:
 else:
     df_autorizado = df_global[df_global["Usuario"] == st.session_state.usuario] if not df_global.empty else pd.DataFrame()
 
-# Filtros superiores
 col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
     anios_disp = ["Todos los años"] + sorted(list(df_autorizado["Año"].dropna().unique())) if not df_autorizado.empty and "Año" in df_autorizado.columns else ["Todos los años"]
@@ -164,7 +165,7 @@ if not df_filtrado.empty:
     if f_egreso != "Todos los egresos":
         df_filtrado = df_filtrado[df_filtrado["CondicionEgreso"] == f_egreso]
 
-# --- PESTAÑAS (Incluyendo Demografía con Pirámide y Matriz Multivariada) ---
+# --- PESTAÑAS ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Demografía & Territorio", "Morbilidad", "Mortalidad", "Análisis Bivariado", "Matriz Multivariada", "Base de Datos"])
 
 with tab1:
@@ -172,31 +173,29 @@ with tab1:
     if df_filtrado.empty:
         st.info("No hay datos registrados con los filtros seleccionados.")
     else:
-        # --- PIRÁMIDE POBLACIONAL ---
+        # --- PIRÁMIDE POBLACIONAL BLINDADA CONTRA ERRORES ---
         cortes = list(range(0, 121, 10))
         etiquetas = [f"{cortes[i]}-{cortes[i+1]-1}" for i in range(len(cortes)-1)]
         df_piramide = df_filtrado.copy()
         df_piramide["GrupoEdad"] = pd.cut(df_piramide["Edad"], bins=cortes, labels=etiquetas, right=False)
         
         tabla_pob = df_piramide.groupby(["GrupoEdad", "Sexo"], observed=False).size().reset_index(name="Freq")
-        
-        # Invertir frecuencias de masculino para simular pirámide tradicional
         tabla_pob_f = tabla_pob[tabla_pob["Sexo"] == "Femenino"]
         tabla_pob_m = tabla_pob[tabla_pob["Sexo"] == "Masculino"].copy()
         tabla_pob_m["Freq"] = -tabla_pob_m["Freq"]
         
-        fig_piramide = px.bar(tabla_pob_f, x="Freq", y="GrupoEdad", orientation="h", name="Femenino", color_discrete_sequence=["coral"])
-        fig_piramide_m = px.bar(tabla_pob_m, x="Freq", y="GrupoEdad", orientation="h", name="Masculino", color_discrete_sequence=["lightgreen"])
-        
-        for trace in fig_piramide_m.data:
-            fig_piramide.add_trace(trace)
+        if not tabla_pob_f.empty or not tabla_pob_m.empty:
+            fig_piramide = px.bar(tabla_pob_f, x="Freq", y="GrupoEdad", orientation="h", title="Pirámide Poblacional de Casos Atendidos", color_discrete_sequence=["coral"])
+            if not tabla_pob_m.empty:
+                fig_piramide_m = px.bar(tabla_pob_m, x="Freq", y="GrupoEdad", orientation="h", color_discrete_sequence=["lightgreen"])
+                for trace in fig_piramide_m.data:
+                    fig_piramide.add_trace(trace)
+            fig_piramide.update_layout(barmode="relative", xaxis_title="Cantidad (Masculino izq. / Femenino der.)", yaxis_title="Grupo de Edad")
+            st.plotly_chart(fig_piramide, use_container_width=True)
+        else:
+            st.info("Datos insuficientes para construir la pirámide poblacional.")
             
-        fig_piramide.update_layout(barmode="relative", title="Pirámide Poblacional de Casos Atendidos",
-                                   xaxis_title="Cantidad de Casos (Masculino izq. / Femenino der.)",
-                                   yaxis_title="Grupo de Edad (Años)")
-        st.plotly_chart(fig_piramide, use_container_width=True)
         st.markdown("---")
-
         col_p1, col_p2 = st.columns(2)
         with col_p1:
             conteo_proc = df_filtrado["Procedencia"].value_counts().reset_index()
