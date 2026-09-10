@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import os
 
-# Configuración de la página
 st.set_page_config(page_title="Sala Situacional de Salud", layout="wide")
 
 ARCHIVO_DATOS = "sala_situacional_cloud.csv"
@@ -13,23 +11,27 @@ MESES_NOMBRES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
 CONDICIONES_EGRESO = ["Vivo", "Fallecido", "Referido", "Contraopinión/Fuga"]
 VARIABLES_DISPONIBLES = ["Año", "SemanaEpi", "Mes", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"]
 
-# Base de datos de usuarios y roles
 CREDENCIALES = {
     "Luis": {"password": "LuisAdmin2026", "admin": True},
     "Marcos": {"password": "MarcosDoc1", "admin": False},
     "Juan": {"password": "JuanDoc2", "admin": False}
 }
 
-# Inicializar Base de Datos en la nube
+# Inicializar Base de Datos con registros de prueba si no existe
 if not os.path.exists(ARCHIVO_DATOS):
-    df_inicial = pd.DataFrame(columns=[
-        "ID", "Usuario", "Año", "Mes", "SemanaEpi", "Edad", "Sexo", 
-        "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"
+    df_inicial = pd.DataFrame([
+        {
+            "ID": 1, "Usuario": "Luis", "Año": 2026, "Mes": "Enero", "SemanaEpi": 1,
+            "Edad": 35, "Sexo": "Masculino", "Procedencia": "Central",
+            "CondicionEgreso": "Vivo", "Diagnosticos": "Apendicitis aguda", "CIE10": "K35"
+        }
     ])
     df_inicial.to_csv(ARCHIVO_DATOS, index=False)
 
 def cargar_datos():
-    return pd.read_csv(ARCHIVO_DATOS)
+    if os.path.exists(ARCHIVO_DATOS):
+        return pd.read_csv(ARCHIVO_DATOS)
+    return pd.DataFrame()
 
 def guardar_datos(df):
     df.to_csv(ARCHIVO_DATOS, index=False)
@@ -43,7 +45,7 @@ def expandir_columna(df, col):
     df_exp[col] = df_exp[col].str.strip()
     return df_exp
 
-# --- SISTEMA DE AUTENTICACIÓN ---
+# --- AUTENTICACIÓN ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
     st.session_state.usuario = None
@@ -51,13 +53,10 @@ if "autenticado" not in st.session_state:
 
 if not st.session_state.autenticado:
     st.title("🔐 Acceso a la Sala Situacional")
-    st.markdown("Ingrese sus credenciales institucionales.")
-    
     with st.form("login_form"):
         username = st.text_input("Usuario")
         password = st.text_input("Contraseña", type="password")
         submit = st.form_submit_button("Iniciar Sesión")
-        
         if submit:
             if username in CREDENCIALES and CREDENCIALES[username]["password"] == password:
                 st.session_state.autenticado = True
@@ -68,7 +67,6 @@ if not st.session_state.autenticado:
                 st.error("Usuario o contraseña incorrectos.")
     st.stop()
 
-# --- APLICACIÓN PRINCIPAL ---
 st.sidebar.title(f"Dr(a). {st.session_state.usuario}")
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.autenticado = False
@@ -78,7 +76,25 @@ st.title("🏥 Sala Situacional de Salud y Vigilancia Epidemiológica")
 
 df_global = cargar_datos()
 
-# Panel lateral para Registro de Casos
+# Obtener listas históricas únicas para los desplegables inteligentes
+procedencias_hist = sorted(list(df_global["Procedencia"].dropna().unique())) if not df_global.empty and "Procedencia" in df_global.columns else ["Central"]
+if not procedencias_hist: procedencias_hist = ["Central"]
+
+dx_hist_list = []
+if not df_global.empty and "Diagnosticos" in df_global.columns:
+    for d in df_global["Diagnosticos"].dropna():
+        dx_hist_list.extend([x.strip() for x in str(d).split(";") if x.strip()])
+dx_hist_list = sorted(list(set(dx_hist_list)))
+if not dx_hist_list: dx_hist_list = ["Apendicitis aguda", "Colelitiasis"]
+
+cie_hist_list = []
+if not df_global.empty and "CIE10" in df_global.columns:
+    for c in df_global["CIE10"].dropna():
+        cie_hist_list.extend([x.strip() for x in str(c).split(";") if x.strip()])
+cie_hist_list = sorted(list(set(cie_hist_list)))
+if not cie_hist_list: cie_hist_list = ["K35", "K80"]
+
+# --- PANEL LATERAL DE REGISTRO ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("📝 Registrar Caso Clínico")
 
@@ -89,31 +105,39 @@ with st.sidebar.form("form_registro"):
     sexo = st.radio("Sexo", ["Femenino", "Masculino"], horizontal=True)
     edad = st.number_input("Edad (años)", value=30, min_value=0, max_value=120)
     
-    proc_hist = list(df_global["Procedencia"].dropna().unique()) if not df_global.empty else ["Central", "Norte", "Sur"]
-    procedencia = st.text_input("Procedencia (Municipio/Área)", value=proc_hist[0] if proc_hist else "Central")
+    # Menú desplegable con memoria para Procedencia
+    procedencia = st.selectbox("Procedencia (Municipio/Área)", options=procedencias_hist, index=0)
     
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO)
-    diagnosticos = st.text_input("Diagnóstico(s) (Separar con punto y coma ';')", value="Apendicitis aguda")
-    cie10 = st.text_input("Código(s) CIE-10 (Separar con ';')", value="K35")
+    
+    # Multiselect desplegable inteligente para Diagnósticos y CIE-10 (Se guardan y recuerdan)
+    diagnosticos_sel = st.multiselect("Diagnósticos (Seleccione o escriba nuevos)", options=dx_hist_list, default=["Apendicitis aguda"] if "Apendicitis aguda" in dx_hist_list else dx_hist_list[:1])
+    cie10_sel = st.multiselect("Códigos CIE-10", options=cie_hist_list, default=["K35"] if "K35" in cie_hist_list else cie_hist_list[:1])
     
     btn_guardar = st.form_submit_button("Guardar Caso en la Nube")
     
     if btn_guardar:
-        nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
-        nuevo_registro = pd.DataFrame([{
-            "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
-            "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia,
-            "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos, "CIE10": cie10
-        }])
-        df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
-        guardar_datos(df_global)
-        st.sidebar.success("¡Caso registrado con éxito!")
-        st.rerun()
+        if not diagnosticos_sel or not cie10_sel:
+            st.sidebar.error("Debe seleccionar al menos un diagnóstico y un código CIE-10.")
+        else:
+            nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
+            dx_texto = "; ".join(diagnosticos_sel)
+            cie_texto = "; ".join(cie10_sel)
+            
+            nuevo_registro = pd.DataFrame([{
+                "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
+                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia,
+                "CondicionEgreso": condicion_egreso, "Diagnosticos": dx_texto, "CIE10": cie_texto
+            }])
+            df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
+            guardar_datos(df_global)
+            st.sidebar.success("¡Caso registrado con éxito!")
+            st.rerun()
 
-# --- CONTROL DE ROLES Y FILTROS GLOBALES ---
+# --- CONTROL DE ROLES Y FILTROS ---
 if st.session_state.admin:
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⚙️ Panel de Auditoría (Admin)")
+    st.sidebar.subheader("⚙️ Auditoría (Admin)")
     usuarios_disponibles = ["Todos los usuarios"] + list(df_global["Usuario"].dropna().unique()) if not df_global.empty else ["Todos los usuarios"]
     filtro_medico = st.sidebar.selectbox("Ver registros de:", usuarios_disponibles)
     if filtro_medico != "Todos los usuarios":
@@ -121,28 +145,28 @@ if st.session_state.admin:
     else:
         df_autorizado = df_global
 else:
-    df_autorizado = df_global[df_global["Usuario"] == st.session_state.usuario]
+    df_autorizado = df_global[df_global["Usuario"] == st.session_state.usuario] if not df_global.empty else pd.DataFrame()
 
-# Filtros superiores de visualización
+# Filtros superiores
 col_f1, col_f2, col_f3 = st.columns(3)
 with col_f1:
-    anios_disp = ["Todos los años"] + sorted(list(df_autorizado["Año"].dropna().unique())) if not df_autorizado.empty else ["Todos los años"]
+    anios_disp = ["Todos los años"] + sorted(list(df_autorizado["Año"].dropna().unique())) if not df_autorizado.empty and "Año" in df_autorizado.columns else ["Todos los años"]
     f_anio = st.selectbox("Filtrar por Año", anios_disp)
 with col_f2:
     f_mes = st.selectbox("Filtrar por Mes", ["Todos los meses"] + MESES_NOMBRES)
 with col_f3:
     f_egreso = st.selectbox("Filtrar por Egreso", ["Todos los egresos"] + CONDICIONES_EGRESO)
 
-# Aplicar filtros
 df_filtrado = df_autorizado.copy()
-if f_anio != "Todos los años":
-    df_filtrado = df_filtrado[df_filtrado["Año"] == int(f_anio)]
-if f_mes != "Todos los meses":
-    df_filtrado = df_filtrado[df_filtrado["Mes"] == f_mes]
-if f_egreso != "Todos los egresos":
-    df_filtrado = df_filtrado[df_filtrado["CondicionEgreso"] == f_egreso]
+if not df_filtrado.empty:
+    if f_anio != "Todos los años":
+        df_filtrado = df_filtrado[df_filtrado["Año"] == int(f_anio)]
+    if f_mes != "Todos los meses":
+        df_filtrado = df_filtrado[df_filtrado["Mes"] == f_mes]
+    if f_egreso != "Todos los egresos":
+        df_filtrado = df_filtrado[df_filtrado["CondicionEgreso"] == f_egreso]
 
-# --- PESTAÑAS DE LA SALA SITUACIONAL ---
+# --- PESTAÑAS ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Demografía & Territorio", "Morbilidad", "Mortalidad", "Análisis Bivariado", "Base de Datos"])
 
 with tab1:
@@ -152,14 +176,14 @@ with tab1:
     else:
         col_p1, col_p2 = st.columns(2)
         with col_p1:
-            fig_proc = px.bar(df_filtrado["Procedencia"].value_counts().reset_index(), x="index", y="Procedencia", 
-                              labels={"index": "Procedencia", "Procedencia": "Casos"}, title="Casos por Procedencia Geográfica",
-                              color_discrete_sequence=["#E67E22"])
+            conteo_proc = df_filtrado["Procedencia"].value_counts().reset_index()
+            conteo_proc.columns = ["Procedencia", "Casos"]
+            fig_proc = px.bar(conteo_proc, x="Procedencia", y="Casos", title="Casos por Procedencia Geográfica", color_discrete_sequence=["#E67E22"])
             st.plotly_chart(fig_proc, use_container_width=True)
         with col_p2:
-            fig_sexo = px.bar(df_filtrado["Sexo"].value_counts().reset_index(), x="index", y="Sexo",
-                              labels={"index": "Sexo", "Sexo": "Casos"}, title="Distribución por Sexo",
-                              color="index", color_discrete_map={"Femenino": "coral", "Masculino": "lightgreen"})
+            conteo_sexo = df_filtrado["Sexo"].value_counts().reset_index()
+            conteo_sexo.columns = ["Sexo", "Casos"]
+            fig_sexo = px.bar(conteo_sexo, x="Sexo", y="Casos", title="Distribución por Sexo", color="Sexo", color_discrete_map={"Femenino": "coral", "Masculino": "lightgreen"})
             st.plotly_chart(fig_sexo, use_container_width=True)
 
 with tab2:
@@ -169,47 +193,49 @@ with tab2:
     else:
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            fig_meses = px.bar(df_filtrado["Mes"].value_counts().reindex(MESES_NOMBRES).reset_index(), x="index", y="Mes",
-                               labels={"index": "Mes", "Mes": "Casos"}, title="Tendencia Mensual de Casos",
-                               color_discrete_sequence=["mediumpurple"])
+            conteo_meses = df_filtrado["Mes"].value_counts().reindex(MESES_NOMBRES).fillna(0).reset_index()
+            conteo_meses.columns = ["Mes", "Casos"]
+            fig_meses = px.bar(conteo_meses, x="Mes", y="Casos", title="Tendencia Mensual de Casos", color_discrete_sequence=["mediumpurple"])
             st.plotly_chart(fig_meses, use_container_width=True)
             
         with col_m2:
             df_exp_dx = expandir_columna(df_filtrado, "Diagnosticos")
-            lista_dx_disp = ["Todos los diagnósticos"] + sorted(list(df_exp_dx["Diagnosticos"].dropna().unique()))
+            lista_dx_disp = ["Todos los diagnósticos"] + sorted(list(df_exp_dx["Diagnosticos"].dropna().unique())) if not df_exp_dx.empty else ["Todos los diagnósticos"]
             sel_dx_curva = st.selectbox("Curva por Diagnóstico específico:", lista_dx_disp)
             
             df_curva = df_exp_dx.copy()
             if sel_dx_curva != "Todos los diagnósticos":
                 df_curva = df_curva[df_curva["Diagnosticos"] == sel_dx_curva]
                 
-            tabla_sem = df_curva["SemanaEpi"].value_counts().sort_index().reset_index()
-            tabla_sem.columns = ["Semana", "Freq"]
-            
-            fig_sem = px.line(tabla_sem, x="Semana", y="Freq", markers=True,
-                              title=f"Curva Epi: {sel_dx_curva}",
-                              labels={"Semana": "Semana Epidemiológica", "Freq": "Casos"})
-            fig_sem.update_traces(line_color="#8E44AD", line_width=2)
-            st.plotly_chart(fig_sem, use_container_width=True)
+            tabla_sem = df_curva["SemanaEpi"].value_counts().sort_index().reset_index() if not df_curva.empty else pd.DataFrame(columns=["SemanaEpi", "count"])
+            if not tabla_sem.empty:
+                tabla_sem.columns = ["Semana", "Freq"]
+                fig_sem = px.line(tabla_sem, x="Semana", y="Freq", markers=True, title=f"Curva Epi: {sel_dx_curva}")
+                fig_sem.update_traces(line_color="#8E44AD", line_width=2)
+                st.plotly_chart(fig_sem, use_container_width=True)
+            else:
+                st.info("Sin registros para este gráfico.")
 
         col_m3, col_m4 = st.columns(2)
         with col_m3:
             df_dx_freq = expandir_columna(df_filtrado, "Diagnosticos")
-            fig_dx = px.bar(df_dx_freq["Diagnosticos"].value_counts().reset_index(), x="index", y="Diagnosticos",
-                            labels={"index": "Diagnóstico", "Diagnosticos": "Frecuencia"}, title="Diagnósticos Frecuentes",
-                            color_discrete_sequence=["lightcoral"])
-            st.plotly_chart(fig_dx, use_container_width=True)
+            if not df_dx_freq.empty and "Diagnosticos" in df_dx_freq.columns:
+                conteo_dx = df_dx_freq["Diagnosticos"].value_counts().reset_index()
+                conteo_dx.columns = ["Diagnostico", "Frecuencia"]
+                fig_dx = px.bar(conteo_dx, x="Diagnostico", y="Frecuencia", title="Diagnósticos Frecuentes", color_discrete_sequence=["lightcoral"])
+                st.plotly_chart(fig_dx, use_container_width=True)
         with col_m4:
             df_cie_freq = expandir_columna(df_filtrado, "CIE10")
-            fig_cie = px.bar(df_cie_freq["CIE10"].value_counts().reset_index(), x="index", y="CIE10",
-                             labels={"index": "CIE-10", "CIE10": "Frecuencia"}, title="Códigos CIE-10 Registrados",
-                             color_discrete_sequence=["steelblue"])
-            st.plotly_chart(fig_cie, use_container_width=True)
+            if not df_cie_freq.empty and "CIE10" in df_cie_freq.columns:
+                conteo_cie = df_cie_freq["CIE10"].value_counts().reset_index()
+                conteo_cie.columns = ["CIE10", "Frecuencia"]
+                fig_cie = px.bar(conteo_cie, x="CIE10", y="Frecuencia", title="Códigos CIE-10 Registrados", color_discrete_sequence=["steelblue"])
+                st.plotly_chart(fig_cie, use_container_width=True)
 
 with tab3:
     st.subheader("Mortalidad y Letalidad")
     total_casos = len(df_filtrado)
-    df_fallecidos = df_filtrado[df_filtrado["CondicionEgreso"] == "Fallecido"]
+    df_fallecidos = df_filtrado[df_filtrado["CondicionEgreso"] == "Fallecido"] if not df_filtrado.empty else pd.DataFrame()
     num_fallecidos = len(df_fallecidos)
     tasa_let = (num_fallecidos / total_casos * 100) if total_casos > 0 else 0
     
@@ -219,20 +245,19 @@ with tab3:
         col_mort1, col_mort2 = st.columns(2)
         with col_mort1:
             df_mort_dx = expandir_columna(df_fallecidos, "Diagnosticos")
-            fig_m_dx = px.bar(df_mort_dx["Diagnosticos"].value_counts().reset_index(), x="index", y="Diagnosticos",
-                              labels={"index": "Diagnóstico", "Diagnosticos": "Fallecidos"}, title="Causas de Mortalidad",
-                              color_discrete_sequence=["#C0392B"])
+            conteo_m_dx = df_mort_dx["Diagnosticos"].value_counts().reset_index()
+            conteo_m_dx.columns = ["Diagnostico", "Fallecidos"]
+            fig_m_dx = px.bar(conteo_m_dx, x="Diagnostico", y="Fallecidos", title="Causas de Mortalidad", color_discrete_sequence=["#C0392B"])
             st.plotly_chart(fig_m_dx, use_container_width=True)
         with col_mort2:
-            fig_m_edad = px.histogram(df_fallecidos, x="Edad", title="Distribución de Edad en Fallecidos",
-                                      labels={"Edad": "Edad", "count": "Fallecidos"}, color_discrete_sequence=["#7F8C8D"])
+            fig_m_edad = px.histogram(df_fallecidos, x="Edad", title="Distribución de Edad en Fallecidos", color_discrete_sequence=["#7F8C8D"])
             st.plotly_chart(fig_m_edad, use_container_width=True)
     else:
         st.info("No hay defunciones registradas en el filtro actual.")
 
 with tab4:
     st.subheader("Análisis Bivariado Estadístico")
-    if len(df_filtrado) < 2:
+    if df_filtrado.empty or len(df_filtrado) < 2:
         st.warning("Se requieren al menos 2 registros para realizar cruces estadísticos.")
     else:
         col_bx1, col_bx2 = st.columns(2)
@@ -245,10 +270,29 @@ with tab4:
         if var_x != var_y:
             df_biv = expandir_columna(df_biv, var_y)
             
-        fig_biv = px.histogram(df_biv, x=var_x, color=var_y, barmode="group",
-                               title=f"Cruce Bivariado: {var_y} según {var_x}")
+        fig_biv = px.histogram(df_biv, x=var_x, color=var_y, barmode="group", title=f"Cruce Bivariado: {var_y} según {var_x}")
         st.plotly_chart(fig_biv, use_container_width=True)
 
 with tab5:
-    st.subheader("Base de Datos Autorizada")
-    st.dataframe(df_autorizado, use_container_width=True)
+    st.subheader("Gestión y Base de Datos Autorizada")
+    if not df_autorizado.empty:
+        st.dataframe(df_autorizado, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("🗑️ Eliminar un Registro por ID")
+        id_a_borrar = st.number_input("Ingrese el ID del paciente a eliminar:", min_value=1, step=1)
+        if st.button("Eliminar Registro", type="primary"):
+            if id_a_borrar in df_global["ID"].values:
+                # Verificar permisos: Admin borra todo, usuario solo lo suyo
+                fila_obj = df_global[df_global["ID"] == id_a_borrar]
+                if st.session_state.admin or fila_obj["Usuario"].values[0] == st.session_state.usuario:
+                    df_global = df_global[df_global["ID"] != id_a_borrar]
+                    guardar_datos(df_global)
+                    st.success(f"Registro con ID {id_a_borrar} eliminado correctamente.")
+                    st.rerun()
+                else:
+                    st.error("No tienes permisos para eliminar un registro que no es tuyo.")
+            else:
+                st.error("El ID ingresado no existe en la base de datos.")
+    else:
+        st.info("No hay registros en la base de datos.")
