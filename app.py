@@ -129,7 +129,7 @@ with st.sidebar.form("form_registro"):
     val_edad = int(fila_a_editar["Edad"]) if fila_a_editar is not None else 30
     edad = st.number_input("Edad (años)", value=val_edad, min_value=0, max_value=120)
     
-    # 1. PROCEDENCIA (Historial + Opción Nueva)
+    # Procedencia (Historial + Opción de nueva procedencia)
     val_proc = fila_a_editar["Procedencia"] if fila_a_editar is not None else procedencias_hist[0]
     idx_proc = procedencias_hist.index(val_proc) if val_proc in procedencias_hist else 0
     nueva_proc_select = st.selectbox("Procedencia (Historial)", options=procedencias_hist + ["[Escribir nueva procedencia]"], index=idx_proc)
@@ -140,21 +140,37 @@ with st.sidebar.form("form_registro"):
     val_egreso_idx = CONDICIONES_EGRESO.index(fila_a_editar["CondicionEgreso"]) if fila_a_editar is not None and fila_a_editar["CondicionEgreso"] in CONDICIONES_EGRESO else 0
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO, index=val_egreso_idx)
     
-    # 2. DIAGNÓSTICO (Historial + Opción Nueva)
-    val_dx = fila_a_editar["Diagnosticos"] if fila_a_editar is not None else dx_hist_list[0]
-    idx_dx = dx_hist_list.index(val_dx) if val_dx in dx_hist_list else 0
-    nuevo_dx_select = st.selectbox("Diagnóstico (Historial)", options=dx_hist_list + ["[Escribir nuevo diagnóstico]"], index=idx_dx)
-    custom_dx = st.text_input("Nuevo diagnóstico (si seleccionó escribir otro):", value="")
-    diagnostico_final = custom_dx.strip() if custom_dx.strip() else nuevo_dx_select
-    if diagnostico_final == "[Escribir nuevo diagnóstico]": diagnostico_final = "Apendicitis aguda"
+    # 1. DIAGNÓSTICOS MÚLTIPLES INTELIGENTES (Selección del historial + escribir nuevos libremente)
+    val_dx_list = [x.strip() for x in str(fila_a_editar["Diagnosticos"]).split(";")] if fila_a_editar is not None else [dx_hist_list[0]]
+    val_dx_list = [x for x in val_dx_list if x in dx_hist_list] # Filtrar válidos en historial por defecto
+    if not val_dx_list: val_dx_list = [dx_hist_list[0]]
+    
+    diagnosticos_sel = st.multiselect("Diagnósticos (Seleccione del historial o escriba nuevos y pulse Enter)", options=dx_hist_list, default=val_dx_list)
+    nuevo_dx_extra = st.text_input("Añadir otro diagnóstico nuevo (opcional):", value="")
+    
+    lista_dx_final = diagnosticos_sel.copy()
+    if nuevo_dx_extra.strip():
+        for item in nuevo_dx_extra.split(";"):
+            if item.strip() and item.strip() not in lista_dx_final:
+                lista_dx_final.append(item.strip())
+    if not lista_dx_final: lista_dx_final = ["Apendicitis aguda"]
+    diagnosticos_txt = "; ".join(lista_dx_final)
 
-    # 3. CÓDIGO CIE-10 (Historial + Opción Nueva)
-    val_cie = fila_a_editar["CIE10"] if fila_a_editar is not None else cie_hist_list[0]
-    idx_cie = cie_hist_list.index(val_cie) if val_cie in cie_hist_list else 0
-    nuevo_cie_select = st.selectbox("Código CIE-10 (Historial)", options=cie_hist_list + ["[Escribir nuevo código]"], index=idx_cie)
-    custom_cie = st.text_input("Nuevo código CIE-10 (si seleccionó escribir otro):", value="")
-    cie_final = custom_cie.strip() if custom_cie.strip() else nuevo_cie_select
-    if cie_final == "[Escribir nuevo código]": cie_final = "K35"
+    # 2. CÓDIGOS CIE-10 MÚLTIPLES INTELIGENTES (Selección del historial + escribir nuevos libremente)
+    val_cie_list = [x.strip() for x in str(fila_a_editar["CIE10"]).split(";")] if fila_a_editar is not None else [cie_hist_list[0]]
+    val_cie_list = [x for x in val_cie_list if x in cie_hist_list]
+    if not val_cie_list: val_cie_list = [cie_hist_list[0]]
+    
+    cie10_sel = st.multiselect("Códigos CIE-10 (Seleccione del historial o escriba nuevos y pulse Enter)", options=cie_hist_list, default=val_cie_list)
+    nuevo_cie_extra = st.text_input("Añadir otro código CIE-10 nuevo (opcional):", value="")
+    
+    lista_cie_final = cie10_sel.copy()
+    if nuevo_cie_extra.strip():
+        for item in nuevo_cie_extra.split(";"):
+            if item.strip() and item.strip() not in lista_cie_final:
+                lista_cie_final.append(item.strip())
+    if not lista_cie_final: lista_cie_final = ["K35"]
+    cie10_txt = "; ".join(lista_cie_final)
     
     btn_guardar = st.form_submit_button("Guardar en la Nube" if fila_a_editar is None else "Actualizar Registro")
     
@@ -164,14 +180,14 @@ with st.sidebar.form("form_registro"):
             nuevo_registro = pd.DataFrame([{
                 "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
                 "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia_final,
-                "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnostico_final, "CIE10": cie_final
+                "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt, "CIE10": cie10_txt
             }])
             df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
             st.sidebar.success("¡Caso registrado con éxito!")
         else:
             idx = df_global[df_global["ID"] == st.session_state.editando_id].index[0]
             df_global.loc[idx, ["Año", "Mes", "SemanaEpi", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"]] = [
-                anio, mes, semana_epi, edad, sexo, procedencia_final, condicion_egreso, diagnostico_final, cie_final
+                anio, mes, semana_epi, edad, sexo, procedencia_final, condicion_egreso, diagnosticos_txt, cie10_txt
             ]
             st.session_state.editando_id = None
             st.sidebar.success("¡Registro actualizado correctamente!")
