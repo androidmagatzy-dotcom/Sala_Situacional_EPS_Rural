@@ -76,7 +76,7 @@ st.title("🏥 Sala Situacional de Salud y Vigilancia Epidemiológica")
 
 df_global = cargar_datos()
 
-# Obtener listas históricas únicas para los desplegables inteligentes
+# Listas históricas para autocompletado inteligente
 procedencias_hist = sorted(list(df_global["Procedencia"].dropna().unique())) if not df_global.empty and "Procedencia" in df_global.columns else ["Central"]
 if not procedencias_hist: procedencias_hist = ["Central"]
 
@@ -105,29 +105,27 @@ with st.sidebar.form("form_registro"):
     sexo = st.radio("Sexo", ["Femenino", "Masculino"], horizontal=True)
     edad = st.number_input("Edad (años)", value=30, min_value=0, max_value=120)
     
-    # Menú desplegable con memoria para Procedencia
-    procedencia = st.selectbox("Procedencia (Municipio/Área)", options=procedencias_hist, index=0)
+    # Campo inteligente que permite seleccionar o escribir nuevos valores
+    nueva_proc = st.text_input("Procedencia (Seleccione o escriba nueva área)", value=procedencias_hist[0])
     
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO)
     
-    # Multiselect desplegable inteligente para Diagnósticos y CIE-10 (Se guardan y recuerdan)
-    diagnosticos_sel = st.multiselect("Diagnósticos (Seleccione o escriba nuevos)", options=dx_hist_list, default=["Apendicitis aguda"] if "Apendicitis aguda" in dx_hist_list else dx_hist_list[:1])
-    cie10_sel = st.multiselect("Códigos CIE-10", options=cie_hist_list, default=["K35"] if "K35" in cie_hist_list else cie_hist_list[:1])
+    # Campos de texto libres separados por punto y coma para flexibilidad total de nuevos diagnósticos y códigos
+    diagnosticos_txt = st.text_input("Diagnóstico(s) (Separar con ';')", value="Apendicitis aguda")
+    cie10_txt = st.text_input("Código(s) CIE-10 (Separar con ';')", value="K35")
     
     btn_guardar = st.form_submit_button("Guardar Caso en la Nube")
     
     if btn_guardar:
-        if not diagnosticos_sel or not cie10_sel:
-            st.sidebar.error("Debe seleccionar al menos un diagnóstico y un código CIE-10.")
+        if not diagnosticos_txt.strip() or not cie10_txt.strip():
+            st.sidebar.error("Debe ingresar al menos un diagnóstico y un código CIE-10.")
         else:
             nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
-            dx_texto = "; ".join(diagnosticos_sel)
-            cie_texto = "; ".join(cie10_sel)
             
             nuevo_registro = pd.DataFrame([{
                 "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
-                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia,
-                "CondicionEgreso": condicion_egreso, "Diagnosticos": dx_texto, "CIE10": cie_texto
+                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": nueva_proc.strip(),
+                "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt.strip(), "CIE10": cie10_txt.strip()
             }])
             df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
             guardar_datos(df_global)
@@ -166,14 +164,39 @@ if not df_filtrado.empty:
     if f_egreso != "Todos los egresos":
         df_filtrado = df_filtrado[df_filtrado["CondicionEgreso"] == f_egreso]
 
-# --- PESTAÑAS ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Demografía & Territorio", "Morbilidad", "Mortalidad", "Análisis Bivariado", "Base de Datos"])
+# --- PESTAÑAS (Incluyendo Demografía con Pirámide y Matriz Multivariada) ---
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Demografía & Territorio", "Morbilidad", "Mortalidad", "Análisis Bivariado", "Matriz Multivariada", "Base de Datos"])
 
 with tab1:
     st.subheader("Demografía y Territorio")
     if df_filtrado.empty:
         st.info("No hay datos registrados con los filtros seleccionados.")
     else:
+        # --- PIRÁMIDE POBLACIONAL ---
+        cortes = list(range(0, 121, 10))
+        etiquetas = [f"{cortes[i]}-{cortes[i+1]-1}" for i in range(len(cortes)-1)]
+        df_piramide = df_filtrado.copy()
+        df_piramide["GrupoEdad"] = pd.cut(df_piramide["Edad"], bins=cortes, labels=etiquetas, right=False)
+        
+        tabla_pob = df_piramide.groupby(["GrupoEdad", "Sexo"], observed=False).size().reset_index(name="Freq")
+        
+        # Invertir frecuencias de masculino para simular pirámide tradicional
+        tabla_pob_f = tabla_pob[tabla_pob["Sexo"] == "Femenino"]
+        tabla_pob_m = tabla_pob[tabla_pob["Sexo"] == "Masculino"].copy()
+        tabla_pob_m["Freq"] = -tabla_pob_m["Freq"]
+        
+        fig_piramide = px.bar(tabla_pob_f, x="Freq", y="GrupoEdad", orientation="h", name="Femenino", color_discrete_sequence=["coral"])
+        fig_piramide_m = px.bar(tabla_pob_m, x="Freq", y="GrupoEdad", orientation="h", name="Masculino", color_discrete_sequence=["lightgreen"])
+        
+        for trace in fig_piramide_m.data:
+            fig_piramide.add_trace(trace)
+            
+        fig_piramide.update_layout(barmode="relative", title="Pirámide Poblacional de Casos Atendidos",
+                                   xaxis_title="Cantidad de Casos (Masculino izq. / Femenino der.)",
+                                   yaxis_title="Grupo de Edad (Años)")
+        st.plotly_chart(fig_piramide, use_container_width=True)
+        st.markdown("---")
+
         col_p1, col_p2 = st.columns(2)
         with col_p1:
             conteo_proc = df_filtrado["Procedencia"].value_counts().reset_index()
@@ -274,6 +297,31 @@ with tab4:
         st.plotly_chart(fig_biv, use_container_width=True)
 
 with tab5:
+    st.subheader("Matriz Multivariada y Correlación")
+    if df_filtrado.empty or len(df_filtrado) < 3:
+        st.warning("Se requieren al menos 3 registros para la matriz multivariada.")
+    else:
+        vars_multi = st.multiselect("Seleccione variables a incluir:", VARIABLES_DISPONIBLES, default=["Edad", "SemanaEpi", "CondicionEgreso"])
+        if len(vars_multi) >= 2:
+            df_multi = df_filtrado.copy()
+            for v in vars_multi:
+                df_multi = expandir_columna(df_multi, v)
+                
+            df_plot_multi = df_multi[vars_multi].copy()
+            for col in df_plot_multi.columns:
+                if not pd.api.types.is_numeric_dtype(df_plot_multi[col]):
+                    df_plot_multi[col] = pd.factorize(df_plot_multi[col])[0]
+                    
+            fig_splom = px.scatter_matrix(df_plot_multi, dimensions=vars_multi, title="Matriz de Dispersión Multivariada")
+            st.plotly_chart(fig_splom, use_container_width=True)
+            
+            st.markdown("##### Matriz de Correlación de Spearman:")
+            corr_matrix = df_plot_multi.corr(method="spearman")
+            st.dataframe(corr_matrix, use_container_width=True)
+        else:
+            st.info("Seleccione al menos 2 variables para generar la matriz.")
+
+with tab6:
     st.subheader("Gestión y Base de Datos Autorizada")
     if not df_autorizado.empty:
         st.dataframe(df_autorizado, use_container_width=True)
@@ -283,7 +331,6 @@ with tab5:
         id_a_borrar = st.number_input("Ingrese el ID del paciente a eliminar:", min_value=1, step=1)
         if st.button("Eliminar Registro", type="primary"):
             if id_a_borrar in df_global["ID"].values:
-                # Verificar permisos: Admin borra todo, usuario solo lo suyo
                 fila_obj = df_global[df_global["ID"] == id_a_borrar]
                 if st.session_state.admin or fila_obj["Usuario"].values[0] == st.session_state.usuario:
                     df_global = df_global[df_global["ID"] != id_a_borrar]
