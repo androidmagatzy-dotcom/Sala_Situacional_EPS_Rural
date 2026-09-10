@@ -98,7 +98,6 @@ if not cie_hist_list: cie_hist_list = ["K35", "K80"]
 st.sidebar.markdown("---")
 st.sidebar.subheader("📝 Registrar o Editar Caso Clínico")
 
-# Control de edición guardado en la sesión
 if "editando_id" not in st.session_state:
     st.session_state.editando_id = None
 
@@ -130,7 +129,7 @@ with st.sidebar.form("form_registro"):
     val_edad = int(fila_a_editar["Edad"]) if fila_a_editar is not None else 30
     edad = st.number_input("Edad (años)", value=val_edad, min_value=0, max_value=120)
     
-    # Procedencia con memoria y opción personalizada
+    # 1. PROCEDENCIA (Historial + Opción Nueva)
     val_proc = fila_a_editar["Procedencia"] if fila_a_editar is not None else procedencias_hist[0]
     idx_proc = procedencias_hist.index(val_proc) if val_proc in procedencias_hist else 0
     nueva_proc_select = st.selectbox("Procedencia (Historial)", options=procedencias_hist + ["[Escribir nueva procedencia]"], index=idx_proc)
@@ -141,41 +140,44 @@ with st.sidebar.form("form_registro"):
     val_egreso_idx = CONDICIONES_EGRESO.index(fila_a_editar["CondicionEgreso"]) if fila_a_editar is not None and fila_a_editar["CondicionEgreso"] in CONDICIONES_EGRESO else 0
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO, index=val_egreso_idx)
     
-    # Diagnósticos con historial inteligente y escritura libre
-    val_dx = fila_a_editar["Diagnosticos"] if fila_a_editar is not None else "Apendicitis aguda"
-    diagnosticos_txt = st.text_input("Diagnóstico(s) (Separar con ';')", value=val_dx)
-    st.caption(f"Sugerencias de historial: {', '.join(dx_hist_list[:6])}")
-    
-    # Códigos CIE-10 con historial inteligente y escritura libre
-    val_cie = fila_a_editar["CIE10"] if fila_a_editar is not None else "K35"
-    cie10_txt = st.text_input("Código(s) CIE-10 (Separar con ';')", value=val_cie)
-    st.caption(f"Sugerencias CIE-10: {', '.join(cie_hist_list[:6])}")
+    # 2. DIAGNÓSTICO (Historial + Opción Nueva)
+    val_dx = fila_a_editar["Diagnosticos"] if fila_a_editar is not None else dx_hist_list[0]
+    idx_dx = dx_hist_list.index(val_dx) if val_dx in dx_hist_list else 0
+    nuevo_dx_select = st.selectbox("Diagnóstico (Historial)", options=dx_hist_list + ["[Escribir nuevo diagnóstico]"], index=idx_dx)
+    custom_dx = st.text_input("Nuevo diagnóstico (si seleccionó escribir otro):", value="")
+    diagnostico_final = custom_dx.strip() if custom_dx.strip() else nuevo_dx_select
+    if diagnostico_final == "[Escribir nuevo diagnóstico]": diagnostico_final = "Apendicitis aguda"
+
+    # 3. CÓDIGO CIE-10 (Historial + Opción Nueva)
+    val_cie = fila_a_editar["CIE10"] if fila_a_editar is not None else cie_hist_list[0]
+    idx_cie = cie_hist_list.index(val_cie) if val_cie in cie_hist_list else 0
+    nuevo_cie_select = st.selectbox("Código CIE-10 (Historial)", options=cie_hist_list + ["[Escribir nuevo código]"], index=idx_cie)
+    custom_cie = st.text_input("Nuevo código CIE-10 (si seleccionó escribir otro):", value="")
+    cie_final = custom_cie.strip() if custom_cie.strip() else nuevo_cie_select
+    if cie_final == "[Escribir nuevo código]": cie_final = "K35"
     
     btn_guardar = st.form_submit_button("Guardar en la Nube" if fila_a_editar is None else "Actualizar Registro")
     
     if btn_guardar:
-        if not diagnosticos_txt.strip() or not cie10_txt.strip():
-            st.sidebar.error("Debe ingresar al menos un diagnóstico y código.")
+        if st.session_state.editando_id is None:
+            nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
+            nuevo_registro = pd.DataFrame([{
+                "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
+                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia_final,
+                "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnostico_final, "CIE10": cie_final
+            }])
+            df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
+            st.sidebar.success("¡Caso registrado con éxito!")
         else:
-            if st.session_state.editando_id is None:
-                nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
-                nuevo_registro = pd.DataFrame([{
-                    "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
-                    "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia_final,
-                    "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt.strip(), "CIE10": cie10_txt.strip()
-                }])
-                df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
-                st.sidebar.success("¡Caso registrado con éxito!")
-            else:
-                idx = df_global[df_global["ID"] == st.session_state.editando_id].index[0]
-                df_global.loc[idx, ["Año", "Mes", "SemanaEpi", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"]] = [
-                    anio, mes, semana_epi, edad, sexo, procedencia_final, condicion_egreso, diagnosticos_txt.strip(), cie10_txt.strip()
-                ]
-                st.session_state.editando_id = None
-                st.sidebar.success("¡Registro actualizado correctamente!")
-                
-            guardar_datos(df_global)
-            st.rerun()
+            idx = df_global[df_global["ID"] == st.session_state.editando_id].index[0]
+            df_global.loc[idx, ["Año", "Mes", "SemanaEpi", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"]] = [
+                anio, mes, semana_epi, edad, sexo, procedencia_final, condicion_egreso, diagnostico_final, cie_final
+            ]
+            st.session_state.editando_id = None
+            st.sidebar.success("¡Registro actualizado correctamente!")
+            
+        guardar_datos(df_global)
+        st.rerun()
 
 # --- CONTROL DE ROLES Y FILTROS ---
 if st.session_state.admin:
