@@ -76,7 +76,7 @@ st.title("🏥 Sala Situacional de Salud y Vigilancia Epidemiológica")
 
 df_global = cargar_datos()
 
-# Listas históricas dinámicas para los menús
+# Listas históricas dinámicas recopiladas de la base de datos
 procedencias_hist = sorted(list(df_global["Procedencia"].dropna().unique())) if not df_global.empty and "Procedencia" in df_global.columns else ["Central"]
 if not procedencias_hist: procedencias_hist = ["Central"]
 
@@ -94,44 +94,87 @@ if not df_global.empty and "CIE10" in df_global.columns:
 cie_hist_list = sorted(list(set(cie_hist_list)))
 if not cie_hist_list: cie_hist_list = ["K35", "K80"]
 
-# --- PANEL LATERAL DE REGISTRO ---
+# --- PANEL LATERAL DE REGISTRO / EDICIÓN ---
 st.sidebar.markdown("---")
-st.sidebar.subheader("📝 Registrar Caso Clínico")
+st.sidebar.subheader("📝 Registrar o Editar Caso Clínico")
+
+# Control de edición guardado en la sesión
+if "editando_id" not in st.session_state:
+    st.session_state.editando_id = None
+
+fila_a_editar = None
+if st.session_state.editando_id is not None and not df_global.empty:
+    match = df_global[df_global["ID"] == st.session_state.editando_id]
+    if not match.empty:
+        fila_a_editar = match.iloc[0]
+
+if fila_a_editar is not None:
+    st.sidebar.warning(f"Editando Caso ID: {st.session_state.editando_id}")
+    if st.sidebar.button("Cancelar Edición"):
+        st.session_state.editando_id = None
+        st.rerun()
 
 with st.sidebar.form("form_registro"):
-    anio = st.number_input("Año", value=2026, min_value=2000, max_value=2100)
-    mes = st.selectbox("Mes", MESES_NOMBRES)
-    semana_epi = st.number_input("Semana Epidemiológica (1-53)", value=1, min_value=1, max_value=53)
-    sexo = st.radio("Sexo", ["Femenino", "Masculino"], horizontal=True)
-    edad = st.number_input("Edad (años)", value=30, min_value=0, max_value=120)
+    val_anio = int(fila_a_editar["Año"]) if fila_a_editar is not None else 2026
+    anio = st.number_input("Año", value=val_anio, min_value=2000, max_value=2100)
     
-    # Manejo dinámico para permitir escribir o seleccionar procedencias y diagnósticos nuevos
-    nueva_proc_select = st.selectbox("Procedencia (Historial)", options=["[Escribir nueva procedencia]"] + procedencias_hist)
-    custom_proc = st.text_input("Si escribió nueva procedencia, indíquela aquí (opcional):", value="")
+    val_mes_idx = MESES_NOMBRES.index(fila_a_editar["Mes"]) if fila_a_editar is not None and fila_a_editar["Mes"] in MESES_NOMBRES else 0
+    mes = st.selectbox("Mes", MESES_NOMBRES, index=val_mes_idx)
+    
+    val_sem = int(fila_a_editar["SemanaEpi"]) if fila_a_editar is not None else 1
+    semana_epi = st.number_input("Semana Epidemiológica (1-53)", value=val_sem, min_value=1, max_value=53)
+    
+    val_sexo_idx = 0 if fila_a_editar is not None and fila_a_editar["Sexo"] == "Femenino" else 1
+    sexo = st.radio("Sexo", ["Femenino", "Masculino"], index=val_sexo_idx, horizontal=True)
+    
+    val_edad = int(fila_a_editar["Edad"]) if fila_a_editar is not None else 30
+    edad = st.number_input("Edad (años)", value=val_edad, min_value=0, max_value=120)
+    
+    # Procedencia con memoria y opción personalizada
+    val_proc = fila_a_editar["Procedencia"] if fila_a_editar is not None else procedencias_hist[0]
+    idx_proc = procedencias_hist.index(val_proc) if val_proc in procedencias_hist else 0
+    nueva_proc_select = st.selectbox("Procedencia (Historial)", options=procedencias_hist + ["[Escribir nueva procedencia]"], index=idx_proc)
+    custom_proc = st.text_input("Nueva procedencia (si seleccionó escribir otra):", value="")
     procedencia_final = custom_proc.strip() if custom_proc.strip() else nueva_proc_select
     if procedencia_final == "[Escribir nueva procedencia]": procedencia_final = "Central"
 
-    condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO)
+    val_egreso_idx = CONDICIONES_EGRESO.index(fila_a_editar["CondicionEgreso"]) if fila_a_editar is not None and fila_a_editar["CondicionEgreso"] in CONDICIONES_EGRESO else 0
+    condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO, index=val_egreso_idx)
     
-    diagnosticos_txt = st.text_input("Diagnóstico(s) (Separar con ';')", value="Apendicitis aguda")
-    cie10_txt = st.text_input("Código(s) CIE-10 (Separar con ';')", value="K35")
+    # Diagnósticos con historial inteligente y escritura libre
+    val_dx = fila_a_editar["Diagnosticos"] if fila_a_editar is not None else "Apendicitis aguda"
+    diagnosticos_txt = st.text_input("Diagnóstico(s) (Separar con ';')", value=val_dx)
+    st.caption(f"Sugerencias de historial: {', '.join(dx_hist_list[:6])}")
     
-    btn_guardar = st.form_submit_button("Guardar Caso en la Nube")
+    # Códigos CIE-10 con historial inteligente y escritura libre
+    val_cie = fila_a_editar["CIE10"] if fila_a_editar is not None else "K35"
+    cie10_txt = st.text_input("Código(s) CIE-10 (Separar con ';')", value=val_cie)
+    st.caption(f"Sugerencias CIE-10: {', '.join(cie_hist_list[:6])}")
+    
+    btn_guardar = st.form_submit_button("Guardar en la Nube" if fila_a_editar is None else "Actualizar Registro")
     
     if btn_guardar:
         if not diagnosticos_txt.strip() or not cie10_txt.strip():
-            st.sidebar.error("Debe ingresar al menos un diagnóstico y un código CIE-10.")
+            st.sidebar.error("Debe ingresar al menos un diagnóstico y código.")
         else:
-            nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
-            
-            nuevo_registro = pd.DataFrame([{
-                "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
-                "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia_final,
-                "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt.strip(), "CIE10": cie10_txt.strip()
-            }])
-            df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
+            if st.session_state.editando_id is None:
+                nuevo_id = int(df_global["ID"].max() + 1) if not df_global.empty and not pd.isna(df_global["ID"].max()) else 1
+                nuevo_registro = pd.DataFrame([{
+                    "ID": nuevo_id, "Usuario": st.session_state.usuario, "Año": anio, "Mes": mes,
+                    "SemanaEpi": semana_epi, "Edad": edad, "Sexo": sexo, "Procedencia": procedencia_final,
+                    "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt.strip(), "CIE10": cie10_txt.strip()
+                }])
+                df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
+                st.sidebar.success("¡Caso registrado con éxito!")
+            else:
+                idx = df_global[df_global["ID"] == st.session_state.editando_id].index[0]
+                df_global.loc[idx, ["Año", "Mes", "SemanaEpi", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"]] = [
+                    anio, mes, semana_epi, edad, sexo, procedencia_final, condicion_egreso, diagnosticos_txt.strip(), cie10_txt.strip()
+                ]
+                st.session_state.editando_id = None
+                st.sidebar.success("¡Registro actualizado correctamente!")
+                
             guardar_datos(df_global)
-            st.sidebar.success("¡Caso registrado con éxito!")
             st.rerun()
 
 # --- CONTROL DE ROLES Y FILTROS ---
@@ -173,7 +216,6 @@ with tab1:
     if df_filtrado.empty:
         st.info("No hay datos registrados con los filtros seleccionados.")
     else:
-        # --- PIRÁMIDE POBLACIONAL BLINDADA CONTRA ERRORES ---
         cortes = list(range(0, 121, 10))
         etiquetas = [f"{cortes[i]}-{cortes[i+1]-1}" for i in range(len(cortes)-1)]
         df_piramide = df_filtrado.copy()
@@ -326,19 +368,36 @@ with tab6:
         st.dataframe(df_autorizado, use_container_width=True)
         
         st.markdown("---")
-        st.subheader("🗑️ Eliminar un Registro por ID")
-        id_a_borrar = st.number_input("Ingrese el ID del paciente a eliminar:", min_value=1, step=1)
-        if st.button("Eliminar Registro", type="primary"):
-            if id_a_borrar in df_global["ID"].values:
-                fila_obj = df_global[df_global["ID"] == id_a_borrar]
-                if st.session_state.admin or fila_obj["Usuario"].values[0] == st.session_state.usuario:
-                    df_global = df_global[df_global["ID"] != id_a_borrar]
-                    guardar_datos(df_global)
-                    st.success(f"Registro con ID {id_a_borrar} eliminado correctamente.")
-                    st.rerun()
+        col_ed1, col_ed2 = st.columns(2)
+        with col_ed1:
+            st.subheader("✏️ Editar un Registro por ID")
+            id_a_editar = st.number_input("Ingrese el ID del paciente a editar:", min_value=1, step=1, key="input_editar")
+            if st.button("Cargar para Editar", type="secondary"):
+                if id_a_editar in df_global["ID"].values:
+                    fila_obj = df_global[df_global["ID"] == id_a_editar].iloc[0]
+                    if st.session_state.admin or fila_obj["Usuario"] == st.session_state.usuario:
+                        st.session_state.editando_id = int(id_a_editar)
+                        st.success(f"¡Caso ID {id_a_editar} cargado en el panel izquierdo! Modifique sus datos y pulse 'Actualizar Registro'.")
+                        st.rerun()
+                    else:
+                        st.error("No tienes permisos para editar este registro.")
                 else:
-                    st.error("No tienes permisos para eliminar un registro que no es tuyo.")
-            else:
-                st.error("El ID ingresado no existe en la base de datos.")
+                    st.error("El ID ingresado no existe.")
+                    
+        with col_ed2:
+            st.subheader("🗑️ Eliminar un Registro por ID")
+            id_a_borrar = st.number_input("Ingrese el ID del paciente a eliminar:", min_value=1, step=1, key="input_borrar")
+            if st.button("Eliminar Registro", type="primary"):
+                if id_a_borrar in df_global["ID"].values:
+                    fila_obj = df_global[df_global["ID"] == id_a_borrar]
+                    if st.session_state.admin or fila_obj["Usuario"].values[0] == st.session_state.usuario:
+                        df_global = df_global[df_global["ID"] != id_a_borrar]
+                        guardar_datos(df_global)
+                        st.success(f"Registro con ID {id_a_borrar} eliminado correctamente.")
+                        st.rerun()
+                    else:
+                        st.error("No tienes permisos para eliminar un registro que no es tuyo.")
+                else:
+                    st.error("El ID ingresado no existe en la base de datos.")
     else:
         st.info("No hay registros en la base de datos.")
