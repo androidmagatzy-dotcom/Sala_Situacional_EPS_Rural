@@ -17,12 +17,12 @@ CREDENCIALES = {
     "Juan": {"password": "JuanDoc2", "admin": False}
 }
 
-# Inicializar Base de Datos con registros de prueba si no existe
+# Inicializar Base de Datos de forma segura: Solo crea el archivo si no existe en absoluto
 if not os.path.exists(ARCHIVO_DATOS):
     df_inicial = pd.DataFrame([
         {
             "ID": 1, "Usuario": "Luis", "Año": 2026, "Mes": "Enero", "SemanaEpi": 1,
-            "Edad": 35, "Sexo": "Masculino", "Procedencia": "Central",
+            "Edad": 35.0, "Sexo": "Masculino", "Procedencia": "Central",
             "CondicionEgreso": "Vivo", "Diagnosticos": "Apendicitis aguda", "CIE10": "K35"
         }
     ])
@@ -30,11 +30,15 @@ if not os.path.exists(ARCHIVO_DATOS):
 
 def cargar_datos():
     if os.path.exists(ARCHIVO_DATOS):
-        return pd.read_csv(ARCHIVO_DATOS)
+        df = pd.read_csv(ARCHIVO_DATOS)
+        return df
     return pd.DataFrame()
 
 def guardar_datos(df):
     df.to_csv(ARCHIVO_DATOS, index=False)
+    if os.path.exists(ARCHIVO_DATOS):
+        with open(ARCHIVO_DATOS, 'rb') as f:
+            os.fsync(f.fileno())
 
 def expandir_columna(df, col):
     if df.empty or col not in df.columns:
@@ -126,8 +130,9 @@ with st.sidebar.form("form_registro"):
     val_sexo_idx = 0 if fila_a_editar is not None and fila_a_editar["Sexo"] == "Femenino" else 1
     sexo = st.radio("Sexo", ["Femenino", "Masculino"], index=val_sexo_idx, horizontal=True)
     
-    val_edad = int(fila_a_editar["Edad"]) if fila_a_editar is not None else 30
-    edad = st.number_input("Edad (años)", value=val_edad, min_value=0, max_value=120)
+    # Edad con soporte para decimales (ej. 0.1 para lactantes)
+    val_edad = float(fila_a_editar["Edad"]) if fila_a_editar is not None else 30.0
+    edad = st.number_input("Edad (años o fracción, ej: 0.1 para meses)", value=val_edad, min_value=0.0, max_value=120.0, step=0.01)
     
     # Procedencia (Historial + Opción de nueva procedencia)
     val_proc = fila_a_editar["Procedencia"] if fila_a_editar is not None else procedencias_hist[0]
