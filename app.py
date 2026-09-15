@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os
+import gspread
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Sala Situacional de Salud", layout="wide")
 
-ARCHIVO_DATOS = "sala_situacional_cloud.csv"
 MESES_NOMBRES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
                  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 CONDICIONES_EGRESO = ["Vivo", "Fallecido", "Referido", "Contraopinión/Fuga"]
@@ -17,28 +17,47 @@ CREDENCIALES = {
     "Juan": {"password": "JuanDoc2", "admin": False}
 }
 
-# Inicializar Base de Datos de forma segura: Solo crea el archivo si no existe en absoluto
-if not os.path.exists(ARCHIVO_DATOS):
-    df_inicial = pd.DataFrame([
-        {
-            "ID": 1, "Usuario": "Luis", "Año": 2026, "Mes": "Enero", "SemanaEpi": 1,
-            "Edad": 35.0, "Sexo": "Masculino", "Procedencia": "Central",
-            "CondicionEgreso": "Vivo", "Diagnosticos": "Apendicitis aguda", "CIE10": "K35"
-        }
-    ])
-    df_inicial.to_csv(ARCHIVO_DATOS, index=False)
+# --- CONEXIÓN SEGURA A GOOGLE DRIVE (GOOGLE SHEETS) ---
+@st.cache_resource
+def conectar_google_sheets():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    credentials = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scopes
+    )
+    client = gspread.authorize(credentials)
+    # Abre la hoja de cálculo por su nombre exacto en tu Google Drive
+    sheet = client.open("bd_sala_situacional").sheet1
+    return sheet
 
 def cargar_datos():
-    if os.path.exists(ARCHIVO_DATOS):
-        df = pd.read_csv(ARCHIVO_DATOS)
+    try:
+        sheet = conectar_google_sheets()
+        data = sheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["ID", "Usuario", "Año", "Mes", "SemanaEpi", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"])
+        df = pd.DataFrame(data)
+        # Asegurar tipos de datos numéricos correctos
+        if "ID" in df.columns:
+            df["ID"] = pd.to_numeric(df["ID"], errors="coerce")
+        if "Edad" in df.columns:
+            df["Edad"] = pd.to_numeric(df["Edad"], errors="coerce")
+        if "Año" in df.columns:
+            df["Año"] = pd.to_numeric(df["Año"], errors="coerce")
+        if "SemanaEpi" in df.columns:
+            df["SemanaEpi"] = pd.to_numeric(df["SemanaEpi"], errors="coerce")
         return df
-    return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al conectar con Google Drive: {e}")
+        return pd.DataFrame()
 
 def guardar_datos(df):
-    df.to_csv(ARCHIVO_DATOS, index=False)
-    if os.path.exists(ARCHIVO_DATOS):
-        with open(ARCHIVO_DATOS, 'rb') as f:
-            os.fsync(f.fileno())
+    sheet = conectar_google_sheets()
+    sheet.clear()
+    # Escribir encabezados y todos los registros convertidos a texto/listas
+    sheet.update([df.columns.values.tolist()] + df.astype(str).values.tolist())
 
 def expandir_columna(df, col):
     if df.empty or col not in df.columns:
@@ -76,11 +95,11 @@ if st.sidebar.button("Cerrar Sesión"):
     st.session_state.autenticado = False
     st.rerun()
 
-st.title("🏥 Sala Situacional de Salud y Vigilancia Epidemiológica")
+st.title("🏥 Sala Situacional de Salud y Vigilancia Epidemiológica (Google Drive)")
 
 df_global = cargar_datos()
 
-# Listas históricas dinámicas recopiladas de la base de datos
+# Listas históricas dinámicas
 procedencias_hist = sorted(list(df_global["Procedencia"].dropna().unique())) if not df_global.empty and "Procedencia" in df_global.columns else ["Central"]
 if not procedencias_hist: procedencias_hist = ["Central"]
 
@@ -118,24 +137,22 @@ if fila_a_editar is not None:
         st.rerun()
 
 with st.sidebar.form("form_registro"):
-    val_anio = int(fila_a_editar["Año"]) if fila_a_editar is not None else 2026
+    val_anio = int(fila_a_editar["Año"]) if fila_a_editar is not None and not pd.isna(fila_a_editar["Año"]) else 2026
     anio = st.number_input("Año", value=val_anio, min_value=2000, max_value=2100)
     
     val_mes_idx = MESES_NOMBRES.index(fila_a_editar["Mes"]) if fila_a_editar is not None and fila_a_editar["Mes"] in MESES_NOMBRES else 0
     mes = st.selectbox("Mes", MESES_NOMBRES, index=val_mes_idx)
     
-    val_sem = int(fila_a_editar["SemanaEpi"]) if fila_a_editar is not None else 1
+    val_sem = int(fila_a_editar["SemanaEpi"]) if fila_a_editar is not None and not pd.isna(fila_a_editar["SemanaEpi"]) else 1
     semana_epi = st.number_input("Semana Epidemiológica (1-53)", value=val_sem, min_value=1, max_value=53)
     
     val_sexo_idx = 0 if fila_a_editar is not None and fila_a_editar["Sexo"] == "Femenino" else 1
     sexo = st.radio("Sexo", ["Femenino", "Masculino"], index=val_sexo_idx, horizontal=True)
     
-    # Edad con soporte para decimales (ej. 0.1 para lactantes)
-    val_edad = float(fila_a_editar["Edad"]) if fila_a_editar is not None else 30.0
+    val_edad = float(fila_a_editar["Edad"]) if fila_a_editar is not None and not pd.isna(fila_a_editar["Edad"]) else 30.0
     edad = st.number_input("Edad (años o fracción, ej: 0.1 para meses)", value=val_edad, min_value=0.0, max_value=120.0, step=0.01)
     
-    # Procedencia (Historial + Opción de nueva procedencia)
-    val_proc = fila_a_editar["Procedencia"] if fila_a_editar is not None else procedencias_hist[0]
+    val_proc = str(fila_a_editar["Procedencia"]) if fila_a_editar is not None else procedencias_hist[0]
     idx_proc = procedencias_hist.index(val_proc) if val_proc in procedencias_hist else 0
     nueva_proc_select = st.selectbox("Procedencia (Historial)", options=procedencias_hist + ["[Escribir nueva procedencia]"], index=idx_proc)
     custom_proc = st.text_input("Nueva procedencia (si seleccionó escribir otra):", value="")
@@ -145,7 +162,6 @@ with st.sidebar.form("form_registro"):
     val_egreso_idx = CONDICIONES_EGRESO.index(fila_a_editar["CondicionEgreso"]) if fila_a_editar is not None and fila_a_editar["CondicionEgreso"] in CONDICIONES_EGRESO else 0
     condicion_egreso = st.selectbox("Condición de Egreso", CONDICIONES_EGRESO, index=val_egreso_idx)
     
-    # 1. DIAGNÓSTICOS MÚLTIPLES INTELIGENTES
     val_dx_list = [x.strip() for x in str(fila_a_editar["Diagnosticos"]).split(";")] if fila_a_editar is not None else [dx_hist_list[0]]
     val_dx_list = [x for x in val_dx_list if x in dx_hist_list]
     if not val_dx_list: val_dx_list = [dx_hist_list[0]]
@@ -161,7 +177,6 @@ with st.sidebar.form("form_registro"):
     if not lista_dx_final: lista_dx_final = ["Apendicitis aguda"]
     diagnosticos_txt = "; ".join(lista_dx_final)
 
-    # 2. CÓDIGOS CIE-10 MÚLTIPLES INTELIGENTES
     val_cie_list = [x.strip() for x in str(fila_a_editar["CIE10"]).split(";")] if fila_a_editar is not None else [cie_hist_list[0]]
     val_cie_list = [x for x in val_cie_list if x in cie_hist_list]
     if not val_cie_list: val_cie_list = [cie_hist_list[0]]
@@ -177,7 +192,7 @@ with st.sidebar.form("form_registro"):
     if not lista_cie_final: lista_cie_final = ["K35"]
     cie10_txt = "; ".join(lista_cie_final)
     
-    btn_guardar = st.form_submit_button("Guardar en la Nube" if fila_a_editar is None else "Actualizar Registro")
+    btn_guardar = st.form_submit_button("Guardar en Google Drive" if fila_a_editar is None else "Actualizar en Google Drive")
     
     if btn_guardar:
         if st.session_state.editando_id is None:
@@ -188,14 +203,14 @@ with st.sidebar.form("form_registro"):
                 "CondicionEgreso": condicion_egreso, "Diagnosticos": diagnosticos_txt, "CIE10": cie10_txt
             }])
             df_global = pd.concat([df_global, nuevo_registro], ignore_index=True)
-            st.sidebar.success("¡Caso registrado con éxito!")
+            st.sidebar.success("¡Caso guardado en Google Drive!")
         else:
             idx = df_global[df_global["ID"] == st.session_state.editando_id].index[0]
             df_global.loc[idx, ["Año", "Mes", "SemanaEpi", "Edad", "Sexo", "Procedencia", "CondicionEgreso", "Diagnosticos", "CIE10"]] = [
                 anio, mes, semana_epi, edad, sexo, procedencia_final, condicion_egreso, diagnosticos_txt, cie10_txt
             ]
             st.session_state.editando_id = None
-            st.sidebar.success("¡Registro actualizado correctamente!")
+            st.sidebar.success("¡Registro actualizado en Google Drive!")
             
         guardar_datos(df_global)
         st.rerun()
@@ -400,7 +415,7 @@ with tab6:
                     fila_obj = df_global[df_global["ID"] == id_a_editar].iloc[0]
                     if st.session_state.admin or fila_obj["Usuario"] == st.session_state.usuario:
                         st.session_state.editando_id = int(id_a_editar)
-                        st.success(f"¡Caso ID {id_a_editar} cargado en el panel izquierdo! Modifique sus datos y pulse 'Actualizar Registro'.")
+                        st.success(f"¡Caso ID {id_a_editar} cargado en el panel izquierdo! Modifique sus datos y pulse 'Actualizar en Google Drive'.")
                         st.rerun()
                     else:
                         st.error("No tienes permisos para editar este registro.")
@@ -416,7 +431,7 @@ with tab6:
                     if st.session_state.admin or fila_obj["Usuario"].values[0] == st.session_state.usuario:
                         df_global = df_global[df_global["ID"] != id_a_borrar]
                         guardar_datos(df_global)
-                        st.success(f"Registro con ID {id_a_borrar} eliminado correctamente.")
+                        st.success(f"Registro con ID {id_a_borrar} eliminado de Google Drive.")
                         st.rerun()
                     else:
                         st.error("No tienes permisos para eliminar un registro que no es tuyo.")
